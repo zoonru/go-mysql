@@ -32,6 +32,13 @@ type TableMapEvent struct {
 	NullBitmap []byte
 }
 
+func (e *TableMapEvent) String() string {
+	if e == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("TableMapEvent(%+v)", *e)
+}
+
 func (e *TableMapEvent) Decode(data []byte) error {
 	pos := 0
 	e.TableID = FixedLengthInt(data[0:e.tableIDSize])
@@ -217,6 +224,13 @@ type RowsEvent struct {
 
 	//rows: invalid: int64, float64, bool, []byte, string
 	Rows [][]interface{}
+}
+
+func (e *RowsEvent) String() string {
+	if e == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("RowsEvent(%+v)", *e)
 }
 
 func (e *RowsEvent) Decode(data []byte) error {
