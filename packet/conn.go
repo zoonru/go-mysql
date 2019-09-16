@@ -16,19 +16,26 @@ import (
 type Conn struct {
 	net.Conn
 	br *bufio.Reader
-
+	bw *bufio.Writer
 	Sequence uint8
 }
 
 func NewConn(conn net.Conn) *Conn {
 	c := new(Conn)
 
-	c.br = bufio.NewReaderSize(conn, 4096)
+	c.br = bufio.NewReaderSize(conn, 1024*64)
+	c.bw = bufio.NewWriterSize(conn, 1024*64)
 	c.Conn = conn
 
 	return c
 }
 
+func (c *Conn) Write(data []byte) (int,error) {
+	return c.bw.Write(data)
+}
+func (c *Conn) Flush() {
+	c.bw.Flush()
+}
 func (c *Conn) ReadPacket() ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -76,6 +83,8 @@ func (c *Conn) ReadPacket() ([]byte, error) {
 }
 
 func (c *Conn) ReadPacketTo(w io.Writer) error {
+	c.bw.Flush()
+
 	header := []byte{0, 0, 0, 0}
 
 	if _, err := io.ReadFull(c.br, header); err != nil {
@@ -152,10 +161,12 @@ func (c *Conn) WritePacket(data []byte) error {
 
 func (c *Conn) ResetSequence() {
 	c.Sequence = 0
+	c.bw.Flush()
 }
 
 func (c *Conn) Close() error {
 	c.Sequence = 0
+	c.bw.Flush()
 	if c.Conn != nil {
 		return c.Conn.Close()
 	}

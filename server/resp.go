@@ -59,7 +59,9 @@ func (c *Conn) writeEOF() error {
 		data = append(data, byte(c.status), byte(c.status>>8))
 	}
 
-	return c.WritePacket(data)
+	res := c.WritePacket(data)
+	c.Flush()
+	return res
 }
 
 func (c *Conn) writeResultset(r *Resultset) error {
@@ -89,6 +91,20 @@ func (c *Conn) writeResultset(r *Resultset) error {
 		data = append(data, v...)
 		if err := c.WritePacket(data); err != nil {
 			return err
+		}
+	}
+	if r.RowDatasCallback != nil {
+		for {
+			row := (*r.RowDatasCallback)(false)
+			if row == nil {
+				break
+			}
+			data = data[0:4]
+			data = append(data, (*row)...)
+			if err := c.WritePacket(data); err != nil {
+				_ = (*r.RowDatasCallback)(true)
+				return err
+			}			
 		}
 	}
 

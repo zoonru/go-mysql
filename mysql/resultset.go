@@ -231,6 +231,7 @@ type Resultset struct {
 	Values     [][]interface{}
 
 	RowDatas []RowData
+	RowDatasCallback *func(bool) *RowData
 }
 
 func (r *Resultset) RowNumber() int {

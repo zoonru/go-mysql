@@ -3,9 +3,10 @@ package mysql
 import (
 	"math"
 	"strconv"
-
+	"log"
 	"github.com/juju/errors"
 	"github.com/siddontang/go/hack"
+	"time"
 )
 
 func formatTextValue(value interface{}) ([]byte, error) {
@@ -36,6 +37,9 @@ func formatTextValue(value interface{}) ([]byte, error) {
 		return strconv.AppendFloat(nil, float64(v), 'f', -1, 64), nil
 	case []byte:
 		return v, nil
+	case time.Time:
+		//todo: appendformat
+		return hack.Slice(value.(time.Time).Format("2006-01-02 15:04:05")), nil
 	case string:
 		return hack.Slice(v), nil
 	case nil:
@@ -93,6 +97,9 @@ func formatField(field *Field, value interface{}) error {
 		field.Charset = 63
 		field.Type = MYSQL_TYPE_DOUBLE
 		field.Flag = BINARY_FLAG | NOT_NULL_FLAG
+	case time.Time:
+		field.Charset = 63
+		field.Type = MYSQL_TYPE_DATETIME
 	case string, []byte:
 		field.Charset = 33
 		field.Type = MYSQL_TYPE_VAR_STRING
@@ -140,11 +147,70 @@ func BuildSimpleTextResultset(names []string, values [][]interface{}) (*Resultse
 				row = append(row, 0xfb)
 			} else {
 				row = append(row, PutLengthEncodedString(b)...)
+				//row = append(row, PutLengthEncodedInt(uint64(len(b)))...)
+				//row = append(row, b...)
 			}
 		}
 
 		r.RowDatas = append(r.RowDatas, row)
 	}
+
+	return r, nil
+}
+
+func BuildSimpleTextResultsetGen(names []string, get_values func(bool)*[]interface{}) (*Resultset, error) {
+	r := new(Resultset)
+
+	r.Fields = make([]*Field, len(names))
+
+	var b []byte
+	var err error
+
+	i:=0
+	tmp:= func(is_error bool)*RowData {
+		vsptr := get_values(is_error)
+		if vsptr == nil {
+			return nil
+		}
+		vs:=*vsptr
+		if len(vs) != len(r.Fields) {
+			log.Print(errors.Errorf("row %d has %d column not equal %d", i, len(vs), len(r.Fields)))
+			return nil
+		}
+
+		var row RowData
+		for j, value := range vs {
+			if i == 0 {
+				field := &Field{}
+				r.Fields[j] = field
+				field.Name = hack.Slice(names[j])
+
+				if err = formatField(field, value); err != nil {
+					log.Print(errors.Trace(err))
+					return nil
+				}
+			}
+			b, err = formatTextValue(value)
+			if err != nil {
+				log.Print(errors.Trace(err))
+				return nil
+			}
+
+			if b == nil {
+				// NULL value is encoded as 0xfb here (without additional info about length)
+				row = append(row, 0xfb)
+			} else {
+				row = append(row, PutLengthEncodedString(b)...)
+			}
+		}
+		i = i+1
+		return &row
+	}
+	row:=tmp(false)
+	if row!=nil {
+		r.RowDatas = append(r.RowDatas, *row)
+	}
+	r.RowDatasCallback = &tmp
 
 	return r, nil
 }
@@ -206,10 +272,88 @@ func BuildSimpleBinaryResultset(names []string, values [][]interface{}) (*Result
 	return r, nil
 }
 
+func BuildSimpleBinaryResultsetGen(names []string, get_values func(bool)*[]interface{}) (*Resultset, error) {
+	r := new(Resultset)
+
+	r.Fields = make([]*Field, len(names))
+
+	var b []byte
+	var err error
+
+	bitmapLen := ((len(names) + 7 + 2) >> 3)
+
+	i:=0
+	tmp:= func(is_error bool)*RowData {
+		vsptr := get_values(is_error)
+		if vsptr == nil {
+			return nil
+		}
+		vs:=*vsptr
+		if len(vs) != len(r.Fields) {
+			log.Print(errors.Errorf("row %d has %d column not equal %d", i, len(vs), len(r.Fields)))
+			return nil
+		}
+
+		var row RowData
+		nullBitmap := make([]byte, bitmapLen)
+
+		row = append(row, 0)
+		row = append(row, nullBitmap...)
+
+		for j, value := range vs {
+			if i == 0 {
+				field := &Field{}
+				r.Fields[j] = field
+				field.Name = hack.Slice(names[j])
+
+				if err = formatField(field, value); err != nil {
+					log.Print(errors.Trace(err))
+					return nil
+				}
+			}
+			if value == nil {
+				nullBitmap[(i+2)/8] |= (1 << (uint(i+2) % 8))
+				continue
+			}
+
+			b, err = formatBinaryValue(value)
+
+			if err != nil {
+				log.Print(errors.Trace(err))
+				return nil
+			}
+
+			if r.Fields[j].Type == MYSQL_TYPE_VAR_STRING {
+				row = append(row, PutLengthEncodedString(b)...)
+			} else {
+				row = append(row, b...)
+			}
+		}
+
+		copy(row[1:], nullBitmap)
+		i = i + 1
+		return &row
+	}
+	row:=tmp(false)
+	if row!=nil {
+		r.RowDatas = append(r.RowDatas, *row)
+	}
+	r.RowDatasCallback = &tmp
+
+	return r, nil
+}
+
 func BuildSimpleResultset(names []string, values [][]interface{}, binary bool) (*Resultset, error) {
 	if binary {
 		return BuildSimpleBinaryResultset(names, values)
 	} else {
 		return BuildSimpleTextResultset(names, values)
+	}
+}
+func BuildSimpleResultsetGen(names []string, get_values func(bool)*[]interface{}, binary bool) (*Resultset, error) {
+	if binary {
+		return BuildSimpleBinaryResultsetGen(names, get_values)
+	} else {
+		return BuildSimpleTextResultsetGen(names, get_values)
 	}
 }
